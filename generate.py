@@ -1,10 +1,19 @@
-"""Generate synthetic data for 3-way reconciliation of a cash-advance app.
+"""
+recon-data-generator / generate.py
+Author:  Raghav Anand
+Created: 2026-11-05
+
+Generate synthetic data for 3-way reconciliation of a cash-advance app.
 
 Creates four CSV files:
   ledger.csv     - the app's internal ledger
   processor.csv  - the payment processor's settlement report
   bank.csv       - the sponsor bank's statement
   answer_key.csv - every break we injected, so a recon engine can be scored
+
+How to run:
+  python3 generate.py            # defaults: 45 days, 8% breaks, seed 42
+  python3 generate.py --help     # all options
 """
 
 import argparse
@@ -48,3 +57,24 @@ def add_business_days(d, n):
         if is_business_day(d):
             n -= 1
     return d
+
+def make_ledger(fake, start, days, per_day):
+    """Create advances, plus a repayment 7-14 days later if it falls in the window."""
+    end = start + timedelta(days=days)
+    rows = []
+    for offset in range(days):
+        ledger_date = start + timedelta(days=offset)
+        for _ in range(random.randint(per_day // 2, per_day)):
+            amount = random.randrange(25, 505, 5)
+            user = fake.name()
+            channel = random.choice(["instant", "ach"])
+            rows.append({"ledger_date": ledger_date, "txn_type": "advance",
+                         "channel": channel, "user_name": user, "amount": amount})
+            repay_date = ledger_date + timedelta(days=random.randint(7, 14))
+            if repay_date < end:
+                rows.append({"ledger_date": repay_date, "txn_type": "repayment",
+                             "channel": "ach", "user_name": user, "amount": amount})
+    rows.sort(key=lambda r: r["ledger_date"])
+    for i, row in enumerate(rows, start=1):
+        row["txn_id"] = f"LDG-{i:06d}"
+    return rows
