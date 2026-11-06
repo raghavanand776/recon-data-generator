@@ -78,3 +78,28 @@ def make_ledger(fake, start, days, per_day):
     for i, row in enumerate(rows, start=1):
         row["txn_id"] = f"LDG-{i:06d}"
     return rows
+
+def make_processor_and_bank(ledger):
+    """Build the 'perfect world' processor and bank records for every ledger row."""
+    processor, bank = {}, {}
+    for i, row in enumerate(ledger, start=1):
+        # When does money actually move? 1 business day (instant) or 2 (ACH).
+        settle = add_business_days(row["ledger_date"], SETTLEMENT_LAG[row["channel"]])
+
+        # Processor's record: echoes our txn_id, adds its own reference.
+        processor[row["txn_id"]] = {
+            "processor_ref": f"PRC-{i:06d}", "txn_id": row["txn_id"],
+            "amount": row["amount"], "status": "settled", "return_code": "",
+            "settle_date": settle,
+        }
+
+        # Bank's view: advances are money OUT (negative), repayments are money IN.
+        sign = -1 if row["txn_type"] == "advance" else 1
+
+        # The bank does NOT know our txn_id; only the processor ref, buried in text.
+        # It's a list so Step 4 can add duplicates/returns or empty it.
+        bank[row["txn_id"]] = [{
+            "bank_ref": f"BNK-{i:06d}", "posted_date": settle,
+            "amount": sign * row["amount"], "description": f"PROC SETTLE PRC-{i:06d}",
+        }]
+    return processor, bank
