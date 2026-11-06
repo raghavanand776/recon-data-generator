@@ -103,3 +103,64 @@ def make_processor_and_bank(ledger):
             "amount": sign * row["amount"], "description": f"PROC SETTLE PRC-{i:06d}",
         }]
     return processor, bank
+
+def inject_breaks(ledger, processor, bank, rate):
+    """Break a random sample of transactions and record each break in the answer key."""
+    answer_key = []
+    # Pick ~8% of transactions, never the same one twice.
+    for row in random.sample(ledger, k=int(len(ledger) * rate)):
+        txn_id = row["txn_id"]
+        # Only repayments can bounce, so advances skip the last type (ach_return).
+        options = BREAK_TYPES if row["txn_type"] == "repayment" else BREAK_TYPES[:-1]
+        kind = random.choice(options)
+
+        if kind == "late_bank_posting":
+            # Bank posts 1-3 business days late (long weekends, cut-off times).
+            extra = random.randint(1, 3)
+            entry = bank[txn_id][0]
+            entry["posted_date"] = add_business_days(entry["posted_date"], extra)
+            detail = f"bank posted {extra} business day(s) late"
+
+        elif kind == "missing_at_processor":
+            # Processor never got it, so no money moved: remove processor + bank.
+            del processor[txn_id]
+            bank[txn_id] = []
+            detail = "processor never received it, so no money moved"
+
+        elif kind == "missing_at_bank":
+            # Processor says settled, bank never posted: money "in flight".
+            bank[txn_id] = []
+            detail = "processor settled but bank never posted"
+
+        elif kind == "amount_mismatch":
+            # Processor quietly deducts a small fee.
+            fee = round(random.uniform(0.25, 2.00), 2)
+            net = round(row["amount"] - fee, 2)
+            processor[txn_id]["amount"] = net
+            entry = bank[txn_id][0]
+            entry["amount"] = net if entry["amount"] > 0 else -net  # keep the sign
+            detail = f"processor deducted a ${fee:.2f} fee"
+
+        elif kind == "duplicate_at_bank":
+            # Bank posts the same item twice (re-sent settlement file).
+            duplicate = dict(bank[txn_id][0])  # dict() makes a copy
+            duplicate["bank_ref"] += "-DUP"
+            bank[txn_id].append(duplicate)
+            detail = "bank posted the same item twice"
+
+        else:  # ach_return
+            # Repayment posts, then bounces 2 business days later (R01 = insufficient funds).
+            processor[txn_id]["status"] = "returned"
+            processor[txn_id]["return_code"] = "R01"
+            original = bank[txn_id][0]
+            bank[txn_id].append({
+                "bank_ref": original["bank_ref"] + "-RET",
+                "posted_date": add_business_days(original["posted_date"], 2),
+                "amount": -original["amount"],  # opposite sign cancels it out
+                "description": f"ACH RETURN R01 {processor[txn_id]['processor_ref']}",
+            })
+            detail = "repayment returned for insufficient funds (R01)"
+
+        # Record what we did, so the recon engine can be scored later.
+        answer_key.append({"txn_id": txn_id, "break_type": kind, "detail": detail})
+    return answer_key
