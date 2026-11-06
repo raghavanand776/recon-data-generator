@@ -164,3 +164,59 @@ def inject_breaks(ledger, processor, bank, rate):
         # Record what we did, so the recon engine can be scored later.
         answer_key.append({"txn_id": txn_id, "break_type": kind, "detail": detail})
     return answer_key
+
+def generate(start, days, per_day, break_rate, seed):
+    """Run every stage and return the four tables as pandas DataFrames."""
+    # Seed BOTH random generators so the same seed gives the same data, names included.
+    random.seed(seed)
+    Faker.seed(seed)
+    fake = Faker()
+
+    # The three stages you built in Steps 2-4.
+    ledger = make_ledger(fake, start, days, per_day)
+    processor, bank = make_processor_and_bank(ledger)
+    answer_key = inject_breaks(ledger, processor, bank, break_rate)
+
+    # Bank entries are grouped per transaction; flatten them into one list.
+    bank_rows = [entry for entries in bank.values() for entry in entries]
+
+    # Turn each book into a table, sorted like a real report.
+    return {
+        "ledger.csv": pd.DataFrame(ledger, columns=[
+            "txn_id", "ledger_date", "txn_type", "channel", "user_name", "amount"]),
+        "processor.csv": pd.DataFrame(list(processor.values()))
+            .sort_values(["settle_date", "processor_ref"]),
+        "bank.csv": pd.DataFrame(bank_rows).sort_values(["posted_date", "bank_ref"]),
+        "answer_key.csv": pd.DataFrame(answer_key, columns=["txn_id", "break_type", "detail"])
+            .sort_values("txn_id"),
+    }
+
+
+def main():
+    """Read command-line options, generate the data, and write four CSV files."""
+    parser = argparse.ArgumentParser(description="Generate 3-way recon test data.")
+    parser.add_argument("--start", default="2026-10-01", help="first ledger date (YYYY-MM-DD)")
+    parser.add_argument("--days", type=int, default=45, help="number of days to generate")
+    parser.add_argument("--per-day", type=int, default=20, help="max advances per day")
+    parser.add_argument("--break-rate", type=float, default=0.08, help="share of txns to break")
+    parser.add_argument("--seed", type=int, default=42, help="same seed = same data")
+    parser.add_argument("--out", default="data", help="output folder")
+    args = parser.parse_args()
+
+    tables = generate(date.fromisoformat(args.start), args.days, args.per_day,
+                      args.break_rate, args.seed)
+
+    # Create the output folder and write each table as a CSV.
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name, df in tables.items():
+        df.to_csv(out_dir / name, index=False)
+        print(f"{name:<16}{len(df):>6} rows")
+
+    print("\nBreaks injected:")
+    print(tables["answer_key.csv"]["break_type"].value_counts().to_string())
+
+
+# Only run main() when this file is executed directly (not when tests import it).
+if __name__ == "__main__":
+    main()
