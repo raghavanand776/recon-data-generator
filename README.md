@@ -1,5 +1,7 @@
 # recon-data-generator
 
+[![tests](https://github.com/raghavanand776/recon-data-generator/actions/workflows/tests.yml/badge.svg)](https://github.com/raghavanand776/recon-data-generator/actions/workflows/tests.yml)
+
 Synthetic test data for **3-way reconciliation** in a cash-advance / neobank app:
 internal ledger vs. payment processor vs. sponsor bank, with realistic breaks
 injected and an answer key to score a recon engine against.
